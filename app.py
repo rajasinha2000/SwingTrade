@@ -8,29 +8,35 @@ from streamlit_autorefresh import st_autorefresh
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import json
+import os
 
-# ========== CONFIG ==========
+# ========== CONFIG ========== #
 st.set_page_config(page_title="Swing Trade Screener", layout="wide")
-st_autorefresh(interval=15 * 60 * 1000, key="datarefresh")  # Refresh every 15 mins
+st_autorefresh(interval=15 * 60 * 1000, key="datarefresh")
 st.title("📈 Top Stocks Swing Trade Setups")
 
-# ========== EMAIL CONFIG ==========
+# ========== EMAIL CONFIG ========== #
 sender_email = "rajasinha2000@gmail.com"
 receiver_email = "mdrinfotech79@gmail.com"
-password = "hefy otrq yfji ictv"  # Use Gmail App Password
+password = "hefy otrq yfji ictv"  # Gmail App Password
 
 # Email Alert Function
-def send_email_alert(stock, signal, trend, confidence):
+def send_email_alert(stock, signal, trend, confidence, entry=None, target=None, stoploss=None):
     subject = f"Swing Trade Alert: {stock} - {signal}"
     body = f"""
-    🚀 Swing Trade Alert 🚀
+🚀 Swing Trade Alert 🚀
 
-    Stock: {stock}
-    Signal: {signal}
-    Trend: {trend}
-    Confidence: {confidence}/5
+📌 Stock: {stock}
+📈 Signal: {signal}
+📉 Trend: {trend}
+🔎 Confidence: {confidence}/5
 
-    📈 This may be a good setup to review on the chart.
+💰 Entry: ₹{entry}
+🎯 Target: ₹{target}
+🛡️ Stoploss: ₹{stoploss}
+
+📢 Review the chart and confirm before trading.
     """
     msg = MIMEMultipart()
     msg['From'] = sender_email
@@ -44,7 +50,29 @@ def send_email_alert(stock, signal, trend, confidence):
     except Exception as e:
         st.error(f"❌ Email failed for {stock}: {e}")
 
-# ========== STOCK LIST ==========
+# ========== EMAIL STATUS TRACKER ========== #
+STATUS_FILE = "alert_status.json"
+
+def load_status():
+    if os.path.exists(STATUS_FILE):
+        with open(STATUS_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+def save_status(status):
+    with open(STATUS_FILE, "w") as f:
+        json.dump(status, f)
+
+def already_alerted(stock):
+    status = load_status()
+    return status.get(stock, False)
+
+def mark_alert_sent(stock):
+    status = load_status()
+    status[stock] = True
+    save_status(status)
+
+# ========== STOCK LIST ========== #
 stocks = [
     "RELIANCE.NS", "HDFCBANK.NS", "INFY.NS", "ICICIBANK.NS", "TCS.NS",
     "LT.NS", "SBIN.NS", "KOTAKBANK.NS", "AXISBANK.NS", "BHARTIARTL.NS",
@@ -54,27 +82,43 @@ stocks = [
 
 results = []
 
-# ========== ANALYSIS LOOP ==========
+# ========== ANALYSIS LOOP ========== #
 for stock in stocks:
     try:
         df = yf.download(stock, period="5d", interval="15m", progress=False)
         if df.empty or len(df) < 50:
             continue
         analysis = analyze_swing(df)
+
+        stock_name = stock.replace(".NS", "")
+
         if analysis["Signal"] == "BUY" and analysis.get("Trend") == "Uptrend":
-            send_email_alert(stock.replace(".NS", ""), analysis["Signal"], analysis["Trend"], analysis["Confidence"])
-            # Add entry/target/stoploss
             latest_close = df['Close'].iloc[-1]
             swing_low = df['Low'].rolling(window=10).min().iloc[-1]
             recent_high = df['High'].rolling(window=10).max().iloc[-1]
+
             analysis["Entry"] = round(latest_close, 2)
             analysis["Stoploss"] = round(swing_low, 2)
             analysis["Target"] = round(recent_high, 2)
-        results.append({"Stock": stock.replace(".NS", ""), **analysis})
+
+            # === Email alert if not already sent === #
+            if not already_alerted(stock_name):
+                send_email_alert(
+                    stock=stock_name,
+                    signal=analysis["Signal"],
+                    trend=analysis["Trend"],
+                    confidence=analysis["Confidence"],
+                    entry=analysis["Entry"],
+                    target=analysis["Target"],
+                    stoploss=analysis["Stoploss"]
+                )
+                mark_alert_sent(stock_name)
+
+        results.append({"Stock": stock_name, **analysis})
     except Exception as e:
         continue
 
-# ========== DISPLAY RESULTS ==========
+# ========== DISPLAY RESULTS ========== #
 if results:
     df_screen = pd.DataFrame(results)
 
@@ -100,9 +144,8 @@ if results:
         col1, col2, col3 = st.columns(3)
         col1.metric("📍 Signal", row.get("Signal", "N/A"))
         col2.metric("📈 Trend", row.get("Trend", "Unknown"))
-        col3.metric("📊 Confidence", f"{row.get('Confidence', 0)}%")
+        col3.metric("📊 Confidence", f"{row.get('Confidence', 0)}")
 
-        # Show entry/target/stoploss
         if "Entry" in row:
             st.markdown(f"**💰 Entry:** ₹{row['Entry']}  |  🎯 Target: ₹{row['Target']}  |  🛡️ Stoploss: ₹{row['Stoploss']}")
 
@@ -123,3 +166,8 @@ if results:
             st.warning("⚠️ Chart data not available.")
 else:
     st.info("❌ No analysis results found.")
+
+# ========== RESET BUTTON ========== #
+if st.button("🔁 Reset All Email Alerts"):
+    save_status({})
+    st.success("✅ All alerts reset.")
