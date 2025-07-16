@@ -90,7 +90,8 @@ for stock in stocks:
             continue
         analysis = analyze_swing(df)
 
-        stock_name = stock.replace(".NS", "")
+        stock_key = stock  # for email alert tracking, e.g., RELIANCE.NS
+        stock_name = stock.replace(".NS", "")  # for display only
 
         if analysis["Signal"] == "BUY" and analysis.get("Trend") == "Uptrend":
             latest_close = df['Close'].iloc[-1]
@@ -101,8 +102,8 @@ for stock in stocks:
             analysis["Stoploss"] = round(swing_low, 2)
             analysis["Target"] = round(recent_high, 2)
 
-            # === Email alert if not already sent === #
-            if not already_alerted(stock_name):
+            # ✅ Send email only once per stock breakout
+            if not already_alerted(stock_key):
                 send_email_alert(
                     stock=stock_name,
                     signal=analysis["Signal"],
@@ -112,7 +113,7 @@ for stock in stocks:
                     target=analysis["Target"],
                     stoploss=analysis["Stoploss"]
                 )
-                mark_alert_sent(stock_name)
+                mark_alert_sent(stock_key)
 
         results.append({"Stock": stock_name, **analysis})
     except Exception as e:
